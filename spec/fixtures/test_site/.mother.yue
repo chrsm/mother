@@ -1,0 +1,14 @@
+export default {
+  base_url: 'https://test.example.com'
+  title: 'test site'
+  description: 'a test site 4 testing'
+  language_code: 'en'
+
+  content_dir: 'content/posts'
+  template_dir: 'templates'
+  output_dir: 'out'
+  permalinks: '/:year/:month/:day/:slug/'
+
+  pages_dir: 'content/pages'
+  pages_permalink: '/:slug/'
+}

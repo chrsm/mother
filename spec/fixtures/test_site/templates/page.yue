@@ -1,0 +1,7 @@
+base = import_template('base')
+
+base { site: data.site, page_title: data.page.meta.title }, ->
+  article ->
+    h1 data.page.meta.title
+    div { class: 'content' }, ->
+      text(data.page.body)

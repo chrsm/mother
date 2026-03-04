@@ -1,0 +1,65 @@
+-- configuration loader for .mother.yue files
+import 'mother.fs' as fs
+import 'yue'
+
+DEFAULT_CONFIG = {
+  content_dir: 'content/posts'
+  template_dir: 'templates'
+  output_dir: 'out'
+  permalinks: '/:year/:month/:day/:slug/'
+
+  -- pages config (e.g. /about)
+  pages_dir: 'content/pages'
+  pages_permalink: '/:slug/'
+}
+
+config = {}
+
+-- load config from .mother.yue in specified directory
+--
+---@param dir string Directory containing .mother.yue (default: current dir)
+---@return table
+config.load = (dir = '.') ->
+  config_path = "#{dir}/.mother.yue"
+
+  unless fs.exists config_path
+    return nil, "Config file not found: #{config_path}"
+
+  src, read_err = fs.read_file config_path
+  return nil, read_err unless src
+
+  lua_code, compile_err = yue.to_lua src, reserve_line_number: false
+  return nil, "Config compile error: #{ compile_err }" unless lua_code
+
+  -- execute to get the exported config
+  fn, load_err = load lua_code, config_path, 't'
+  return nil, "Config load error: #{ load_err }" unless fn
+
+  ok, result = try fn!
+  unless ok
+    return nil, "Config execution error: #{ result }"
+
+  -- result should be a table with 'default' key from 'export default'
+  user_config = result.default or result
+
+  -- merge with defaults
+  config = { k, v for k, v in pairs DEFAULT_CONFIG }
+  for k, v in pairs user_config
+    config[k] = v
+
+  config
+
+-- validate required config fields
+--
+---@param config table
+---@return table Config
+config.validate = (config) ->
+  required = { 'title', 'base_url' }
+  missing = [ f for f in *required when not config[f] ]
+
+  if #missing > 0
+    return nil, "Missing required config fields: #{ table.concat missing, ', ' }"
+
+  config
+
+export default config

@@ -1,0 +1,58 @@
+-- front-matter parser for markdown files
+import 'yue'
+
+const START_DELIM = '--- frontmatter ---'
+const END_DELIM = '---/ frontmatter ---'
+
+-- trim whitespace from both ends of a string
+--
+---@param s string
+---@return string
+trim = (s) ->
+  s\match('^%s*(.-)%s*$')
+
+-- parse front-matter from content
+--
+---@return table { meta: table, body: string } or { body: string } if no front-matter
+---@return nil, error_message on parse failure
+export parse = (content) ->
+  start_match = content\sub 1, #START_DELIM
+  unless start_match == START_DELIM
+    return { body: content }
+
+  end_pos = content\find END_DELIM, #START_DELIM + 1, true
+  unless end_pos
+    return { body: content }
+
+  -- extract front-matter content (between delimiters)
+  fm_content = content\sub #START_DELIM + 2, end_pos - 1
+  fm_content = trim(fm_content)
+
+  -- extract body (after end delimiter)
+  body_start = end_pos + #END_DELIM
+  body = content\sub body_start
+  body = body\gsub '^[\r\n]+', ''
+
+  -- wrap front-matter content in table syntax and compile
+  yue_src = "{\n#{ fm_content }\n}"
+  lua_code, err = yue.to_lua yue_src, reserve_line_number: false
+  return nil, "compile error: #{ err }" unless lua_code
+
+  -- load and execute the compiled Lua (yue.to_lua already adds 'return')
+  fn, load_err = load lua_code
+  return nil, "lua load error: #{ load_err }" unless fn
+
+  ok, meta = try fn!
+  unless ok
+    return nil, "execution error: #{ meta }"
+
+  { :meta, :body }
+
+-- check if content has front-matter
+--
+---@param content string
+---@return boolean
+export has_frontmatter = (content) ->
+  (content\sub 1, #START_DELIM) == START_DELIM
+
+export :START_DELIM, :END_DELIM

@@ -1,0 +1,50 @@
+#!/usr/bin/env -S yue -e
+import 'argparse'
+import 'lfs'
+
+import 'mother.build' as build
+import 'mother.config' as cfg
+
+parser = argparse 'mother', 'static site generator built in YueScript'
+
+with parser
+  d = \option '-d --directory', 'run as if mother started in <directory>'
+  d\default '.'
+
+  b = \command 'build', 'build the site'
+  b\flag '-v --verbose', 'show detailed output'
+
+args = parser\parse!
+
+-- change to specified directory if needed
+if args.directory != '.'
+  ok, err = lfs.chdir args.directory
+  unless ok
+    io
+      .stderr
+      \write "error: cannot change to directory '#{args.directory}': #{err}\n"
+
+    os.exit 1
+
+unless args.build
+  io.stderr\write 'must choose a main command'
+  os.exit 1
+
+--[[ do stuff ]]
+config, err = cfg.load '.'
+unless config
+  io.stderr\write "error: #{err}\n"
+  os.exit 1
+
+config, err = cfg.validate config
+unless config
+  io.stderr\write "error: #{err}\n"
+  os.exit 1
+
+results = build.build_site config, verbose: args.verbose
+
+if #results.errors > 0
+  io.stderr\write '\nerrors encountered:\n'
+  for e in *results.errors
+    io.stderr\write "  - #{e}\n"
+  os.exit 1

@@ -1,0 +1,129 @@
+-- template rendering functions
+import 'mother.template.env' as tpl_env
+import 'yue'
+
+-- cache for compiled template functions (not executed results)
+-- map<path,lua fn>
+compiled_cache = {}
+
+-- clear the template cache (useful between builds or for testing)
+export clear_cache = ->
+  compiled_cache = {}
+
+-- compile a template file to a Lua function (cached)
+--
+---@param path string Path to the .yue template file
+---@return compiled function or nil, error
+compile_template = (path) ->
+  if compiled_cache[path]
+    return compiled_cache[path]
+
+  f, open_err = io.open path, 'r'
+  return nil, "Cannot open template: #{path}: #{open_err}" unless f
+
+  src = f\read '*a'
+  f\close!
+
+  -- yue->lua
+  lua_code, compile_err = yue.to_lua src, reserve_line_number: false
+  return nil, "Template compile error in #{path}: #{compile_err}" unless lua_code
+
+  -- load the compiled Lua (but don't execute yet)
+  fn, load_err = load lua_code, path, 't'
+  return nil, "Template load error in #{path}: #{load_err}" unless fn
+
+  -- Cache the compiled function
+  compiled_cache[path] = fn
+  fn
+
+-- execute a compiled template function with a given environment
+--
+---@param fn - Compiled template function
+---@param env - Environment to use
+---@return result of execution or nil, error
+execute_template = (fn, env) ->
+  -- set environment
+  if setfenv
+    setfenv fn, env
+  else
+    debug.setupvalue fn, 1, env
+
+  ok, result = try fn!
+  if ok
+    result, nil
+  else
+    nil, result
+
+-- render a template from YueScript source string
+--
+---@param src string YueScript source code
+---@param data table Data object accessible in templates
+---@param opts table Options { template_dir: string for import_template resolution }
+---@return rendered (string|nil), (nil|error)
+export render_string = (src, data = {}, opts = {}) ->
+  template_dir = opts.template_dir or '.'
+
+  -- build environment first - this creates the buffer that all templates will share
+  -- we'll inject import_template after creating the env
+  template_env, buffer = tpl_env.build_env data
+
+  -- create import_template function that uses the SAME environment, so that
+  -- imported templates write into the saem buffer
+  import_template_fn = (rel_path) ->
+    path = rel_path
+    unless path\match '%.yue$'
+      path ..= '.yue'
+
+    full_path = "#{ template_dir }/#{ path }"
+
+    -- compile the template + cache
+    fn, err = compile_template full_path
+    error "import_template failed for '#{ rel_path }': #{ err }" unless fn
+
+    -- execute with the SAME environment (shares buffer, data, tag functions)
+    result, exec_err = execute_template fn, template_env
+    error "import_template execution failed for '#{ rel_path }': #{ exec_err }" if exec_err
+
+    -- return the exports directly
+    -- if it's a table with a 'default' key, return that; otherwise return as-is
+    if (type result) == 'table' and result.default
+      result.default
+    else
+      result
+
+  template_env.import_template = import_template_fn
+
+  -- yue -> lua
+  lua_code, compile_err = yue.to_lua src, reserve_line_number: false
+  return nil, "YueScript compile error: #{compile_err}" unless lua_code
+
+  -- load the compiled Lua
+  fn, load_err = load(lua_code, 'template', 't')
+  return nil, "Lua load error: #{load_err}" unless fn
+
+  -- execute with our environment
+  result, exec_err = execute_template fn, template_env
+  return nil, "Template execution error: #{exec_err}" if exec_err
+
+  buffer\result!
+
+-- render a template from a file
+--
+---@param path string Path to the .yue template file
+---@param data table Data object accessible in templates
+---@param opts table Options { template_dir: string }
+---@return string rendered HTML string, or nil + error
+export render_file = (path, data = {}, opts = {}) ->
+  -- determine template_dir from path if not specified
+  template_dir = opts.template_dir
+  unless template_dir
+    -- use directory of the template file
+    template_dir = (path\match '(.+)/[^/]+$') or '.'
+
+  f, open_err = io.open path, 'r'
+  return nil, "Cannot open file: #{open_err}" unless f
+
+  src = f\read '*a'
+  f\close!
+
+  render_string src, data, template_dir: template_dir

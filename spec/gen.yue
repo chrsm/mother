@@ -1,0 +1,354 @@
+import 'busted.runner' as busted
+import 'yue'
+busted!
+
+import 'lfs'
+import 'mother.frontmatter' as fm
+import 'mother.fs'
+import 'mother.template' as tpl
+
+describe 'frontmatter', ->
+  describe 'has_frontmatter', ->
+    it 'returns true when content starts with delimiter', ->
+      content = '--- frontmatter ---\ntitle: \"test\"\n---/ frontmatter ---\nbody'
+      assert.is_true fm.has_frontmatter content
+
+    it 'returns false when content has no front-matter', ->
+      content = '# Just markdown\n\nNo front-matter here.'
+      assert.is_false fm.has_frontmatter content
+
+    it 'returns false when delimiter is not at start', ->
+      content = 'some text\n--- frontmatter ---\ntitle: \"test\"\n---/ frontmatter ---'
+      assert.is_false fm.has_frontmatter content
+
+  describe 'parse', ->
+    it 'returns body only when no front-matter present', ->
+      content = '# Hello World\n\nThis is content.'
+      result = fm.parse content
+      assert.is_nil result.meta
+      assert.equals content, result.body
+
+    it 'parses simple key-value pairs', ->
+      content = [[--- frontmatter ---
+title: "My Post"
+draft: false
+count: 42
+---/ frontmatter ---
+# Content here]]
+
+      result = fm.parse content
+      assert.is_not_nil result.meta
+      assert.equals 'My Post', result.meta.title
+      assert.equals false, result.meta.draft
+      assert.equals 42, result.meta.count
+      assert.equals '# Content here', result.body
+
+    it 'parses arrays', ->
+      content = [[--- frontmatter ---
+tags: { "lua", "yue", "web" }
+---/ frontmatter ---
+Body]]
+      result = fm.parse content
+      assert.is_not_nil result.meta
+      assert.same { 'lua', 'yue', 'web' }, result.meta.tags
+      assert.equals 'Body', result.body
+
+    it 'parses nested tables', ->
+      content = [[--- frontmatter ---
+author:
+  name: "chrsm"
+  email: "chrsm@email.dot.email"
+---/ frontmatter ---
+Body]]
+
+      result = fm.parse content
+      assert.is_not_nil result.meta
+      assert.equals 'chrsm', result.meta.author.name
+      assert.equals 'chrsm@email.dot.email', result.meta.author.email
+
+    it 'supports expressions and string interpolation', ->
+      content = [[--- frontmatter ---
+computed: 2 + 2
+today: os.date '%Y-%m-%d'
+greeting: "Hello, #{ 2 + 2 }"
+---/ frontmatter ---
+Body]]
+
+      result = fm.parse content
+      assert.is_not_nil result.meta
+      assert.equals 4, result.meta.computed
+      assert.equals 'Hello, 4', result.meta.greeting
+      -- today is dynamic but should be a string
+      assert.is_string result.meta.today
+
+    it 'handles empty body', ->
+      content = [[--- frontmatter ---
+title: "Empty"
+---/ frontmatter ---
+]]
+      result = fm.parse content
+      assert.is_not_nil result.meta
+      assert.equals 'Empty', result.meta.title
+      assert.equals '', result.body
+
+    it 'handles multiline body content', ->
+      content = [[--- frontmatter ---
+title: "Test"
+---/ frontmatter ---
+Line 1
+
+Line 2
+
+Line 3]]
+      result = fm.parse content
+      assert.equals 'Line 1\n\nLine 2\n\nLine 3', result.body
+
+    it 'returns error for invalid YueScript syntax', ->
+      content = [[--- frontmatter ---
+title: "unclosed string
+---/ frontmatter ---
+Body]]
+      result, err = fm.parse content
+      assert.is_nil result
+      assert.is_not_nil err
+      assert.matches 'compile error', err
+
+describe 'template', ->
+  describe 'escape', ->
+    it 'escapes HTML special characters', ->
+      assert.equals '&amp;&lt;&gt;&quot;&#39;', tpl.escape "&<>\"'"
+
+    it 'returns empty string for nil', ->
+      assert.equals '', tpl.escape!
+
+    it 'handles plain text', ->
+      assert.equals 'Hello World', tpl.escape 'Hello World'
+
+  describe 'raw', ->
+    it 'creates a raw HTML marker', ->
+      r = tpl.raw '<strong>bold</strong>'
+      assert.is_true (tpl.is_raw r)
+
+    it 'is not escaped when used', ->
+      -- raw HTML should pass through unchanged
+      r = tpl.raw'<em>italic</em>'
+      assert.equals '<em>italic</em>', r.html
+
+  describe 'is_void', ->
+    it 'returns true for void elements', ->
+      assert.is_true tpl.is_void 'br'
+      assert.is_true tpl.is_void 'img'
+      assert.is_true tpl.is_void 'input'
+      assert.is_true tpl.is_void 'meta'
+      assert.is_true tpl.is_void 'hr'
+
+    it 'returns false for regular elements', ->
+      assert.is_false tpl.is_void 'div'
+      assert.is_false tpl.is_void 'span'
+      assert.is_false tpl.is_void 'p'
+
+  describe 'render_attrs', ->
+    it 'renders attributes to HTML string', ->
+      result = tpl.render_attrs class: 'box', id: 'main'
+      -- order may vary, so check both are present
+      assert.matches 'class="box"', result
+      assert.matches 'id="main"', result
+
+    it 'handles boolean attributes', ->
+      result = tpl.render_attrs disabled: true, readonly: true
+      assert.matches ' disabled', result
+      assert.matches ' readonly', result
+
+    it 'escapes attribute values', ->
+      result = tpl.render_attrs title: 'Hello \"World\"'
+      assert.matches 'title="Hello &quot;World&quot;"', result
+
+    it 'returns empty string for nil', ->
+      assert.equals '', tpl.render_attrs!
+
+  describe 'render_string', ->
+    it 'renders a simple tag with text', ->
+      result = tpl.render_string [[p "Hello World"]]
+      assert.matches '<p>Hello World</p>', result
+
+    it 'renders nested tags', ->
+      _nestedtpl = [[
+div ->
+  p "First"
+  p "Second"
+]]
+
+      result = tpl.render_string _nestedtpl
+      assert.matches '<div>', result
+      assert.matches '<p>First</p>', result
+      assert.matches '<p>Second</p>', result
+      assert.matches '</div>', result
+
+    it 'renders attributes', ->
+      result = tpl.render_string [[a { href: "/about", class: "link" }, "About"]]
+      -- attribute order in tables is not guaranteed, so check each separately
+      assert.is_not_nil result\match 'href="/about"'
+      assert.is_not_nil result\match 'class="link"'
+      assert.is_not_nil result\match '>About</a>'
+
+    it 'renders void elements', ->
+      result = tpl.render_string [[br!]]
+      assert.matches '<br>', result
+      -- void elements should not have closing tags
+      assert.is_nil result\match '</br>'
+
+    it 'renders void elements with attributes', ->
+      result = tpl.render_string [[meta { charset: "utf-8" }]]
+      assert.is_not_nil result\match '<meta charset="utf%-8">'
+
+    it 'accesses data from template', ->
+      result = tpl.render_string [[h1 data.title]], title: 'Welcome'
+      assert.matches '<h1>Welcome</h1>', result
+
+    it 'escapes content by default', ->
+      result = tpl.render_string [[p "<script>alert('xss')</script>"]]
+      assert.matches '&lt;script&gt;', result
+      assert.is_nil result\match '<script>'
+
+    it 'allows raw HTML', ->
+      result = tpl.render_string [[p raw("<em>emphasis</em>")]]
+      assert.matches '<em>emphasis</em>', result
+
+    it 'handles complex nested structures', ->
+      _nestedtpl = [[
+html ->
+  head ->
+    title "Test"
+    meta { charset: "utf-8" }
+  body ->
+    div { class: "container" }, ->
+      h1 "Hello"
+      p "World"
+]]
+
+      result = tpl.render_string _nestedtpl
+      assert.is_not_nil result\match '<html>'
+      assert.is_not_nil result\match '<head>'
+      assert.is_not_nil result\match '<title>Test</title>'
+      assert.is_not_nil result\match '<meta charset="utf%-8">'
+      assert.is_not_nil result\match '<body>'
+      assert.is_not_nil result\match '<div class="container">'
+      assert.is_not_nil result\match '<h1>Hello</h1>'
+      assert.is_not_nil result\match '</html>'
+
+    it 'allows iteration with ipairs', ->
+      _itertpl = [[
+ul ->
+  for item in *data.items
+    li item
+]]
+      result = tpl.render_string _itertpl, { items: { 'One', 'Two', 'Three' } }
+      assert.matches '<ul>', result
+      assert.matches '<li>One</li>', result
+      assert.matches '<li>Two</li>', result
+      assert.matches '<li>Three</li>', result
+      assert.matches '</ul>', result
+
+    it 'returns error for invalid syntax', ->
+      result, err = tpl.render_string [[div { unclosed]]
+      assert.is_nil result
+      assert.is_not_nil err
+      assert.matches 'compile error', err
+
+-- cleanup func for copy test
+rmdir_r = (dir) ->
+  return unless fs.is_dir dir
+  for entry in lfs.dir dir
+    if entry != '.' and entry != '..'
+      path = "#{ dir }/#{ entry }"
+      if fs.is_dir path
+        rmdir_r path
+      else
+        os.remove path
+  lfs.rmdir dir
+
+describe 'fs', ->
+  describe 'copy_file', ->
+    test_dir = nil
+
+    setup ->
+      test_dir = '../spec/fixtures/fs_test'
+      fs.mkdir_p test_dir
+
+    teardown ->
+      rmdir_r test_dir
+
+    it 'copies a file to a new location', ->
+      src = "#{ test_dir }/source.txt"
+      dest = "#{ test_dir }/dest.txt"
+      fs.write_file src, 'hello world'
+
+      ok, err = fs.copy_file src, dest
+      assert.is_true ok
+      assert.is_nil err
+
+      content = fs.read_file dest
+      assert.equals 'hello world', content
+
+    it 'creates parent directories for destination', ->
+      src = "#{ test_dir }/source2.txt"
+      dest = "#{ test_dir }/subdir/nested/dest2.txt"
+      fs.write_file src, 'nested content'
+
+      ok, err = fs.copy_file src, dest
+      assert.is_true ok
+      assert.is_nil err
+
+      content = fs.read_file dest
+      assert.equals 'nested content', content
+
+    it 'returns error for non-existent source', ->
+      ok, err = fs
+        .copy_file "#{ test_dir }/nonexistent.txt", "#{ test_dir }/out.txt"
+      assert.is_nil ok
+      assert.is_not_nil err
+      assert.matches 'Cannot read', err
+
+  describe 'copy_dir', ->
+    local test_dir, src_dir, dest_dir
+
+    setup ->
+      test_dir = '../spec/fixtures/fs_copy_test'
+      src_dir = "#{ test_dir }/src"
+      dest_dir = "#{ test_dir }/dest"
+
+      -- Create source directory structure
+      fs.mkdir_p "#{ src_dir }/subdir"
+      fs.write_file "#{ src_dir }/file1.txt", 'content 1'
+      fs.write_file "#{ src_dir }/file2.txt", 'content 2'
+      fs.write_file "#{ src_dir }/subdir/file3.txt", 'content 3'
+      fs.write_file "#{ src_dir }/subdir/file4.txt", 'content 4'
+
+    teardown ->
+      rmdir_r test_dir
+
+    it 'copies all files from source to destination', ->
+      copied, errors = fs.copy_dir src_dir, dest_dir
+      assert.equals 4, copied
+      assert.is_nil errors
+
+    it 'preserves directory structure', ->
+      fs.copy_dir src_dir, dest_dir
+
+      assert.is_true fs.is_file "#{ dest_dir }/file1.txt"
+      assert.is_true fs.is_file "#{ dest_dir }/file2.txt"
+      assert.is_true fs.is_dir "#{ dest_dir }/subdir"
+      assert.is_true fs.is_file "#{ dest_dir }/subdir/file3.txt"
+      assert.is_true fs.is_file "#{ dest_dir }/subdir/file4.txt"
+
+    it 'preserves file contents', ->
+      fs.copy_dir src_dir, dest_dir
+
+      assert.equals 'content 1', fs.read_file "#{ dest_dir }/file1.txt"
+      assert.equals 'content 3', fs.read_file "#{ dest_dir }/subdir/file3.txt"
+
+    it 'returns error for non-directory source', ->
+      copied, errors = fs.copy_dir "#{ test_dir }/nonexistent", dest_dir
+      assert.equals 0, copied
+      assert.is_not_nil errors
+      assert.matches 'not a directory', errors[1]

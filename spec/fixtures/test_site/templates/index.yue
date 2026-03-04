@@ -1,0 +1,8 @@
+base = import_template('base')
+
+base { site: data.site, page_title: 'Home' }, ->
+  h2 'Posts'
+  ul ->
+    for post in *data.posts
+      li ->
+        a { href: post.permalink }, post.meta.title

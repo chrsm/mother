@@ -1,0 +1,93 @@
+import 'lunamark'
+import 'yue'
+
+-- default options for the markdown parser
+DEFAULT_OPTIONS = {
+  smart: true -- smart quotes, dashes, ellipses
+  strikeout: true -- ~~strikethrough~~
+  fenced_code_blocks: true -- ```code```
+  definition_lists: true -- term\n: definition
+  notes: true -- footnotes [^1]
+  inline_notes: true -- inline footnotes ^[like this]
+  superscript: true -- x^2^
+  subscript: true -- H~2~O
+}
+
+-- execute YueScript code and return the result of the last expression
+--
+---@param code string YueScript source code
+---@return string The string representation of the result
+---@raises error if compilation or execution fails
+execute_yue = (code) ->
+  lua_code, compile_err = yue.to_lua code, reserve_line_number: false
+  unless lua_code
+    error "YueScript compile error in eval block: #{compile_err}"
+
+  fn, load_err = load lua_code, 'eval', 't'
+  unless fn
+    error "Lua load error in eval block: #{load_err}"
+
+  ok, result = pcall fn
+  unless ok
+    error "Execution error in eval block: #{result}"
+
+  -- just convert whatever it is to a string
+  tostring result
+
+-- create an HTML writer with eval block support
+-- wraps the standard HTML writer to intercept ```yue!``` blocks
+--
+---@return writer table Modified lunamark HTML writer
+create_eval_writer = ->
+  writer = lunamark.writer.html.new!
+  original_fenced_code = writer.fenced_code
+
+  writer.fenced_code = (code, lang, ...) ->
+    -- check for yue! language tag, only thing supported atm
+    lang_str = type(lang) == 'string' and lang or (lang and tostring(lang) or '')
+
+    if lang_str\match '^yue!'
+      -- execute the YueScript and return the result directly
+      -- errors will propagate up and fail the build
+      execute_yue code
+    else
+      -- pass through to original handler
+      original_fenced_code code, lang, ...
+
+  writer
+
+-- create a markdown parser with the given options
+--
+---@param opts table Optional overrides for DEFAULT_OPTIONS
+---@return function(markdown_string) -> html_string
+export create_parser = (opts = {}) ->
+  options = { k, v for k, v in pairs DEFAULT_OPTIONS }
+  for k, v in pairs opts
+    options[k] = v
+
+  writer = create_eval_writer!
+  parse = lunamark.reader.markdown.new writer, options
+
+  -- return a simple function that converts markdown to HTML
+  (markdown_str) ->
+    html, metadata = parse markdown_str
+    html
+
+-- default parser instance
+default_parser = create_parser!
+
+-- convert markdown string to HTML using default options
+--
+---@param markdown_str string Markdown content
+---@return string HTML output
+export render = (markdown_str) ->
+  default_parser markdown_str
+
+-- convert markdown string to HTML with custom options
+--
+---@param markdown_str string Markdown content
+---@param opts table Parser options
+---@return string HTML output
+export render_with_options = (markdown_str, opts) ->
+  parser = create_parser opts
+  parser markdown_str

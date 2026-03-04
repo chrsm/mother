@@ -1,0 +1,229 @@
+-- build orchestration: discover content, render templates, write output
+import 'mother.frontmatter' as fm
+import 'mother.fs'
+import 'mother.markdown' as md
+import 'mother.template' as tpl
+
+-- discover all markdown files in a directory
+--
+---@param dir string Directory to search
+---@return table Array of file paths
+export discover_content = (dir) ->
+  files = fs.find dir, '%.md$'
+
+  table.sort files
+
+  files
+
+-- parse a content file (post or page) into structured data
+-- parses frontmatter and renders markdown body to HTML
+--
+---@param filepath string Path to a markdown file
+---@param opts table Options { render_markdown: bool (default true) }
+---@return table { meta, body, source_path }
+export parse_content = (filepath, opts = {}) ->
+  render_markdown = opts.render_markdown != false
+
+  content, err = fs.read_file filepath
+  unless content
+    return nil, err
+
+  result, parse_err = fm.parse content
+  unless result
+    return nil, parse_err
+
+  -- render markdown to HTML unless disabled or frontmatter says raw
+  if render_markdown and not result.meta?.raw
+    result.body = md.render result.body
+
+  result.source_path = filepath
+  result
+
+-- generate permalink path from pattern and post metadata
+-- pattern tokens: :year, :month, :day, :slug
+--
+---@param pattern string URL pattern string (e.g., "/:year/:month/:day/:slug/")
+---@param meta table Post metadata table
+---@return string path ("/2026/04/05/hello-world/")
+export make_permalink = (pattern, meta) ->
+  year, month, day = (meta.date or '')\match '(%d+)-(%d+)-(%d+)'
+
+  replacements = {
+    ':year': year or '0000'
+    ':month': month or '00'
+    ':day': day or '00'
+    ':slug': meta.slug or 'untitled'
+  }
+
+  result = pattern
+  for token, value in pairs replacements
+    result = result\gsub token, value
+
+  result
+
+-- generate permalink for pages (simpler, no date required)
+-- pattern tokens: :slug
+--
+---@param pattern string URL pattern string (e.g., "/:slug/")
+---@param meta table Page metadata table
+---@return string path ("/about/")
+export make_page_permalink = (pattern, meta) ->
+  replacements = {
+    ':slug': meta.slug or 'untitled'
+  }
+
+  result = pattern
+  for token, value in pairs replacements
+    result = result\gsub token, value
+
+  result
+
+-- render a template file with data
+--
+---@param template_path string Path to .yue template
+---@param data table Data available as `data` in template
+---@param opts table Options { template_dir: string }
+---@return (string|nil), (error|nil)
+export render_template = (template_path, data, opts = {}) ->
+  src, err = fs.read_file template_path
+  unless src
+    return nil, "Cannot read template #{ template_path }: #{ err }"
+
+  tpl.render_string src, data, opts
+
+-- build the entire site
+--
+---@param config table Site configuration
+---@param opts table Options { verbose: bool }
+---@return table { files_written: number, errors: table }
+export build_site = (config, opts = {}) ->
+  log = opts.verbose and ((...) -> print(...)) or (-> nil)
+  results = { files_written: 0, errors: {} }
+  tpl.clear_cache!
+
+  config\pre_build?!
+
+  -- template options
+  tpl_opts = { template_dir: config.template_dir }
+
+  -- discover and parse posts
+  posts = {}
+  if fs.is_dir config.content_dir
+    log "discovering posts in #{ config.content_dir }"
+    post_files = discover_content config.content_dir
+
+    if #post_files > 0
+      log "found #{ #post_files } post#{ #post_files > 0 and 's' or '' }"
+
+      for filepath in *post_files
+        post, err = parse_content filepath
+        if post
+          post.permalink = make_permalink config.permalinks, post.meta
+          posts[] = post
+        else
+          results.errors[] = "error parsing #{ filepath }: #{ err }"
+
+      -- date desc
+      table.sort posts, (a, b) ->
+        (a.meta?.date or '') > (b.meta?.date or '')
+
+      log 'rendering posts'
+      post_template = "#{ config.template_dir }/post.yue"
+      for i, post in ipairs posts
+        -- calculate prev/next posts (posts are sorted newest first)
+        -- prev_post = older post (next in array)
+        -- next_post = newer post (previous in array)
+        prev_post = posts[i + 1] -- older
+        next_post = posts[i - 1] -- newer
+
+        template_data = {
+          site: config
+          post: post
+          posts: posts
+          prev_post: prev_post
+          next_post: next_post
+        }
+
+        html, err = render_template post_template, template_data, tpl_opts
+        if html
+          output_path = "#{ config.output_dir }#{ post.permalink }index.html"
+          ok, write_err = fs.write_file(output_path, html)
+          if ok
+            log "\t-> #{ output_path }"
+            results.files_written += 1
+          else
+            results.errors[] = "Error writing #{ output_path }: #{ write_err }"
+        else
+          results.errors[] = "Error rendering #{ post.source_path }: #{ err }"
+    else
+      log 'no posts found'
+
+  -- discover and parse pages
+  pages = {}
+  if config.pages_dir and fs.is_dir config.pages_dir
+    log "discovering pages in #{ config.pages_dir }"
+    page_files = discover_content config.pages_dir
+
+    if #page_files > 0
+      log "found #{ #page_files } page#{ #page_files > 0 and 's' or '' }"
+
+      for filepath in *page_files
+        page, err = parse_content filepath
+        if page
+          page.permalink = make_page_permalink config.pages_permalink, page.meta
+          pages[] = page
+        else
+          results.errors[] = "error parsing #{ filepath }: #{ err }"
+
+      log 'rendering pages'
+      default_page_template = "#{ config.template_dir }/page.yue"
+      for page in *pages
+        -- allow per-page template override via frontmatter
+        page_template = if page.meta.template
+          "#{ config.template_dir }/#{ page.meta.template }.yue"
+        else
+          default_page_template
+
+        template_data = {
+          site: config
+          page: page
+          pages: pages
+          posts: posts
+        }
+
+        html, err = render_template page_template, template_data, tpl_opts
+        if html
+          output_path = "#{ config.output_dir }#{ page.permalink }index.html"
+          ok, write_err = fs.write_file(output_path, html)
+          if ok
+            log "\t-> #{ output_path }"
+            results.files_written += 1
+          else
+            results.errors[] = "Error writing #{ output_path }: #{ write_err }"
+        else
+          results.errors[] = "Error rendering #{ page.source_path }: #{ err }"
+
+  log 'rendering index'
+  index_template = "#{ config.template_dir }/index.yue"
+  index_html, err = render_template index_template, {
+      site: config
+      :posts
+      :pages
+    }, tpl_opts
+
+  if index_html
+    output_path = "#{ config.output_dir }/index.html"
+    ok, write_err = fs.write_file output_path, index_html
+    if ok
+      log "\t-> #{ output_path }"
+      results.files_written += 1
+    else
+      results.errors[] = "error writing #{ output_path }: #{ write_err }"
+  else
+    results.errors[] = "error rendering index: #{ err }"
+
+  log "done! built #{ results.files_written } file#{ results.files_written > 0 and 's' or '' }"
+
+  config\post_build?!
+
+  results

@@ -1,0 +1,11 @@
+/.yuelsp
+
+# full-site gen test output
+/spec/fixtures/test_site/out
+
+# samples
+/sample
+/sample2
+/_origtemplate
+/.mother.yue
+/dubya

@@ -1,0 +1,21 @@
+-- mother/template.yue
+-- main entry point for the template engine
+
+import 'mother.template.env' as env
+import 'mother.template.render' as render
+import 'mother.template.tags' as tags
+
+export render_string = render.render_string
+export render_file = render.render_file
+export clear_cache = render.clear_cache
+
+export build_env = env.build_env
+
+export escape = tags.escape
+export raw = tags.raw
+export is_raw = tags.is_raw
+export is_void = tags.is_void
+export render_attrs = tags.render_attrs
+
+export VOID_TAGS = tags.VOID_TAGS
+export HTML_TAGS = tags.HTML_TAGS

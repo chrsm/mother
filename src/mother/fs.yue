@@ -1,0 +1,180 @@
+import 'lfs'
+
+-- check if path exists
+--
+---@param path string
+---@return boolean
+export exists = (path) ->
+  (lfs.attributes path) != nil
+
+-- check if path is a directory
+--
+---@param path string
+---@return boolean
+export is_dir = (path) ->
+  attr = lfs.attributes path
+  attr and attr.mode == 'directory'
+
+-- check if path is a file
+--
+---@param path string
+---@return boolean
+export is_file = (path) ->
+  attr = lfs.attributes path
+  attr and attr.mode == 'file'
+
+-- create directory and all parents (like mkdir -p)
+--
+---@param path string
+export mkdir_p = (path) ->
+  parts = [ p for p in path\gmatch '[^/]+' ]
+  current = (path\sub 1, 1) == '/' and '/' or ''
+  for part in *parts
+    current ..= part .. '/'
+    unless exists current
+      ok, err = lfs.mkdir current
+      return nil, err unless ok or exists current
+  true
+
+-- List files in directory matching pattern (simple glob)
+--
+---@param dir string
+---@param pattern string
+---@return table { path, path, ... }
+export glob = (dir, pattern = '.*') ->
+  results = {}
+  unless is_dir dir
+    return results
+
+  for entry in lfs.dir dir
+    continue if entry == '.' or entry == '..'
+    full_path = "#{ dir }/#{ entry }"
+    if entry\match pattern
+      results[] = full_path
+  results
+
+-- recursively find files matching pattern
+--
+---@param dir string
+---@param pattern string
+---@param results table
+export find = (dir, pattern = '.*', results = {}) ->
+  unless is_dir dir
+    return results
+
+  for entry in lfs.dir dir
+    continue if entry == '.' or entry == '..'
+    full_path = "#{ dir }/#{ entry }"
+    if is_dir full_path
+      find full_path, pattern, results
+    elseif entry\match pattern
+      results[] = full_path
+  results
+
+-- read entire file contents
+--
+---@param path string
+---@return string
+export read_file = (path) ->
+  f, err = io.open path, 'r'
+  return nil, err unless f
+  content = f\read '*a'
+  f\close!
+  content
+
+-- write content to file (creates parent dirs)
+--
+---@param path string
+---@param content string
+export write_file = (path, content) ->
+  -- extract directory from path
+  dir = path\match '(.+)/[^/]+$'
+  if dir
+    ok, err = mkdir_p dir
+    return nil, err unless ok
+
+  f, err = io.open path, 'w'
+  return nil, err unless f
+  f\write content
+  f\close!
+  true
+
+-- get parent directory of a path
+--
+---@param path string
+---@return string
+export dirname = (path) ->
+  path\match '(.+)/[^/]+$' or '.'
+
+-- get filename from path
+--
+---@param path string
+---@return string
+export basename = (path) ->
+  path\match '([^/]+)$'
+
+-- get current working directory
+--
+---@return string
+export cwd = ->
+  lfs.currentdir!
+
+-- change current working directory
+--
+---@param path string
+export chdir = (path) ->
+  lfs.chdir path
+
+-- copy a single file
+--
+---@param src string Source file path
+---@param dest string Destination file path
+---@return boolean success, string? error
+export copy_file = (src, dest) ->
+  -- Read source file
+  content, read_err = read_file src
+  return nil, "Cannot read #{src}: #{read_err}" unless content
+
+  -- Write to destination
+  ok, write_err = write_file dest, content
+  return nil, "Cannot write #{dest}: #{write_err}" unless ok
+
+  true
+
+-- recursively copy directory contents
+-- copies all files and subdirectories from src to dest
+--
+---@param src string Source directory path
+---@param dest string Destination directory path
+---@return number files_copied, table? errors
+export copy_dir = (src, dest) ->
+  errors = {}
+  copied = 0
+
+  unless is_dir src
+    return 0, { "src is not a directory: #{ src }" }
+
+  ok, err = mkdir_p dest
+  unless ok
+    return 0, { "cannot create dest directory: #{ err }" }
+
+  for entry in lfs.dir src
+    continue if entry == '.' or entry == '..'
+
+    src_path = "#{ src }/#{ entry }"
+    dest_path = "#{ dest }/#{ entry }"
+
+    if is_dir src_path
+      sub_copied, sub_errors = copy_dir src_path, dest_path
+      copied += sub_copied
+      if sub_errors
+        for e in *sub_errors
+          errors[] = e
+    else
+      ok, err = copy_file src_path, dest_path
+      if ok
+        copied += 1
+      else
+        errors[] = err
+
+  copied, #errors > 0 and errors or nil

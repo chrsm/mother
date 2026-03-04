@@ -1,0 +1,191 @@
+import 'busted.runner' as busted
+busted!
+
+import 'lfs'
+import 'mother.build' as build
+import 'mother.config' as cfg
+import 'mother.fs' as fs
+
+TEST_DIR = '../spec/fixtures/test_site'
+OUTPUT_DIR = "#{TEST_DIR}/out"
+
+read_file = (path) ->
+  f = io.open path, 'r'
+  return nil unless f
+  content = f\read '*a'
+  f\close!
+  content
+
+contains = (str, pattern) ->
+  (str\find pattern, 1, true) != nil
+
+rmdir_r = (dir) ->
+  return unless fs.is_dir dir
+  for entry in lfs.dir dir
+    if entry != '.' and entry != '..'
+      path = "#{dir}/#{entry}"
+      if fs.is_dir path
+        rmdir_r path
+      else
+        os.remove path
+  lfs.rmdir dir
+
+-- fixture files are in spec/fixtures/test_site/
+-- generated output rm'd each run
+teardown ->
+  rmdir_r OUTPUT_DIR
+
+describe 'full site generation', ->
+  config, results = nil, nil
+
+  -- build the site once for all tests in this describe block
+  before_each ->
+    -- clean output before each test group run
+    rmdir_r OUTPUT_DIR
+
+    -- Load and validate config
+    orig_dir = lfs.currentdir!
+    lfs.chdir TEST_DIR
+
+    config = cfg.load '.'
+    assert.is_not_nil config, 'Failed to load config'
+
+    config = cfg.validate config
+    assert.is_not_nil config, 'Config validation failed'
+
+    -- Build the site
+    results = build.build_site config, { verbose: false }
+
+    lfs.chdir orig_dir
+
+  describe 'build results', ->
+    it 'reports correct number of files written', ->
+      -- 3 posts + 1 page + 1 index = 5 files
+      assert.equals 5, results.files_written
+
+    it 'reports no errors', ->
+      assert.equals 0, #results.errors
+
+  describe 'post output', ->
+    it 'creates post files at correct paths', ->
+      assert.is_true fs.exists "#{OUTPUT_DIR}/2026/04/01/first-post/index.html"
+      assert.is_true fs.exists "#{OUTPUT_DIR}/2026/04/15/second-post/index.html"
+      assert.is_true fs.exists "#{OUTPUT_DIR}/2026/04/20/eval-test/index.html"
+
+    it 'renders markdown to HTML in posts', ->
+      content = read_file "#{OUTPUT_DIR}/2026/04/01/first-post/index.html"
+      assert.is_not_nil content
+
+      -- check markdown was rendered
+      assert.is_true (contains content, '<strong>first post</strong>'),
+        'bold not rendered'
+      assert.is_true (contains content, '<em>markdown</em>'), 'italic not rendered'
+      assert.is_true (contains content, '<h2>'), 'h2 not rendered'
+      assert
+        .is_true (contains content, '<li>list item one</li>'), 'list not rendered'
+      assert.is_true (contains content, '<code'),
+        'code block not rendered'
+
+    it 'renders strikethrough extension', ->
+      content = read_file "#{OUTPUT_DIR}/2026/04/15/second-post/index.html"
+      assert.is_not_nil content
+      assert
+        .is_true contains(content, '<strike>strikethrough</strike>'), 'strikethrough not rendered'
+
+    it 'renders blockquotes', ->
+      content = read_file "#{OUTPUT_DIR}/2026/04/15/second-post/index.html"
+      assert.is_not_nil content
+      assert.is_true contains(content, '<blockquote>'), 'blockquote not rendered'
+
+    it 'renders links', ->
+      content = read_file "#{OUTPUT_DIR}/2026/04/15/second-post/index.html"
+      assert.is_not_nil content
+      assert
+        .is_true contains(content, 'href="https://example.com"'), 'link not rendered'
+
+    it 'includes post metadata in output', ->
+      content = read_file "#{OUTPUT_DIR}/2026/04/01/first-post/index.html"
+      assert.is_not_nil content
+      assert.is_true contains(content, 'First Post'), 'title not in output'
+      assert.is_true contains(content, '2026-04-01'), 'date not in output'
+
+  describe 'eval blocks', ->
+    it 'evaluates yue! code blocks and outputs result', ->
+      content = read_file "#{OUTPUT_DIR}/2026/04/20/eval-test/index.html"
+      assert.is_not_nil content
+      assert.is_true contains(content, '42'), 'math eval result not found'
+
+    it 'evaluates complex expressions', ->
+      content = read_file "#{OUTPUT_DIR}/2026/04/20/eval-test/index.html"
+      assert.is_not_nil content
+      -- table.concat { 'apple', 'banana', 'cherry' }, ' | '
+      assert
+        .is_true contains(content, 'apple | banana | cherry'), 'string eval result not found'
+
+    it 'does not evaluate regular yue code blocks', ->
+      content = read_file "#{OUTPUT_DIR}/2026/04/20/eval-test/index.html"
+      assert.is_not_nil content
+      -- Regular ```yue block should show as code
+      assert
+        .is_true contains(content, 'class="language-yue"'), 'regular code block not rendered as code'
+      assert
+        .is_true contains(content, 'this_is_not'), 'regular code block content missing'
+
+  describe 'page output', ->
+    it 'creates page files at correct paths', ->
+      assert.is_true fs.exists "#{OUTPUT_DIR}/about/index.html"
+
+    it 'renders markdown to HTML in pages', ->
+      content = read_file "#{OUTPUT_DIR}/about/index.html"
+      assert.is_not_nil content
+
+      assert
+        .is_true contains(content, '<strong>test site</strong>'), 'bold not rendered'
+      assert
+        .is_true contains(content, '<li>markdown parsing</li>'), 'list not rendered'
+
+    it 'includes page title', ->
+      content = read_file "#{OUTPUT_DIR}/about/index.html"
+      assert.is_not_nil content
+      assert.is_true contains(content, '>About<'), 'page title not in output'
+
+  describe 'index output', ->
+    it 'creates index.html at root', ->
+      assert.is_true fs.exists "#{OUTPUT_DIR}/index.html"
+
+    it 'lists all posts', ->
+      content = read_file "#{OUTPUT_DIR}/index.html"
+      assert.is_not_nil content
+      assert.is_true contains(content, 'First Post'), 'first post not listed'
+      assert.is_true contains(content, 'Second Post'), 'second post not listed'
+
+    it 'includes post permalinks', ->
+      content = read_file "#{OUTPUT_DIR}/index.html"
+      assert.is_not_nil content
+      assert
+        .is_true contains(content, '/2026/04/01/first-post/'), 'first post link missing'
+      assert
+        .is_true contains(content, '/2026/04/15/second-post/'), 'second post link missing'
+
+    it 'orders posts by date descending', ->
+      content = read_file "#{OUTPUT_DIR}/index.html"
+      assert.is_not_nil content
+
+      -- second post (mar 15) should appear before first post (mar 1)
+      second_pos = content\find 'Second Post'
+      first_pos = content\find 'First Post'
+      assert.is_true second_pos < first_pos, 'posts not in date descending order'
+
+  describe 'template rendering', ->
+    it 'applies base template structure', ->
+      content = read_file "#{OUTPUT_DIR}/index.html"
+      assert.is_not_nil content
+      assert.is_true contains(content, '<!DOCTYPE html>'), 'doctype missing'
+      assert.is_true contains(content, '<html'), 'html tag missing'
+      assert.is_true contains(content, '<head>'), 'head tag missing'
+      assert.is_true contains(content, '<body>'), 'body tag missing'
+
+    it 'includes site title from config', ->
+      content = read_file "#{OUTPUT_DIR}/index.html"
+      assert.is_not_nil content
+      assert.is_true contains(content, 'test site'), 'site title missing'

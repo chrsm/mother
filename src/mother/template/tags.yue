@@ -1,0 +1,104 @@
+-- HTML tag definitions and utilities
+-- HTML5 void elements (self-closing, no content)
+export VOID_TAGS = {
+  area: true
+  base: true
+  br: true
+  col: true
+  embed: true
+  hr: true
+  img: true
+  input: true
+  link: true
+  meta: true
+  param: true
+  source: true
+  track: true
+  wbr: true
+}
+
+-- common HTML5 tags (TODO: check)
+export HTML_TAGS = {
+  -- document
+  'html', 'head', 'body', 'title', 'meta', 'link', 'script', 'style', 'noscript',
+  -- sections
+  'header', 'footer', 'main', 'section', 'article', 'aside', 'nav',
+  -- headings
+  'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+  -- content
+  'div', 'span', 'p', 'pre', 'code', 'blockquote',
+  -- lists
+  'ul', 'ol', 'li', 'dl', 'dt', 'dd',
+  -- tables
+  'table', 'thead', 'tbody', 'tfoot', 'tr', 'th', 'td', 'caption', 'colgroup',
+  'col',
+  -- Forms
+  'form', 'input', 'textarea', 'select', 'option', 'optgroup', 'button', 'label',
+  'fieldset', 'legend',
+  -- media
+  'img', 'video', 'audio', 'source', 'track', 'picture', 'figure', 'figcaption',
+  -- inline
+  'a', 'strong', 'em', 'b', 'i', 'u', 's', 'small', 'mark', 'sub', 'sup', 'br',
+  'hr',
+  -- interactive
+  'details', 'summary', 'dialog',
+  -- other
+  'iframe', 'canvas', 'svg', 'template', 'slot'
+}
+
+-- Characters that need escaping in HTML
+ESCAPE_MAP = {
+  '&': '&amp;'
+  '<': '&lt;'
+  '>': '&gt;'
+  '"': '&quot;'
+  "'": '&#39;'
+}
+
+-- escape HTML special characters
+export escape = (str) ->
+  return '' if str == nil
+  (tostring str)\gsub '[&<>"\']', (c) -> ESCAPE_MAP[c]
+
+-- Marker metatable for raw (pre-escaped) HTML
+RAW_MT = { __raw: true }
+
+-- mark a string as raw HTML (won't be escaped)
+export raw = (html) ->
+  setmetatable { html: tostring html }, RAW_MT
+
+-- check if value is raw HTML
+export is_raw = (val) ->
+  (type val) == 'table' and val.<> == RAW_MT
+
+-- unwrap raw HTML or escape regular string
+export unwrap = (val) ->
+  if is_raw val
+    val.html
+  elseif (type val) == 'string'
+    escape val
+  elseif (type val) == 'number'
+    tostring val
+  else
+    ''
+
+-- check if a tag is void (self-closing)
+export is_void = (name) ->
+  VOID_TAGS[name] == true
+
+-- render attributes table to HTML string
+-- { class: "foo", id: "bar" } -> ' class="foo" id="bar"'
+export render_attrs = (attrs) ->
+  return '' unless attrs and (type attrs) == 'table'
+
+  parts = {}
+  for k, v in pairs attrs
+    continue if type(k) != 'string'
+    if v == true
+      -- boolean attribute (disabled, checked)
+      parts[] = " #{k}"
+    elseif v and v != false
+      -- regular attribute
+      parts[] = " #{k}=\"#{escape(tostring(v))}\""
+
+  table.concat parts

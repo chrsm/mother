@@ -1,0 +1,11 @@
+export default (opts, content_fn) ->
+  text('<!DOCTYPE html>\n')
+  html { lang: 'en' }, ->
+    head ->
+      meta { charset: 'utf-8' }
+      title opts.page_title or opts.site.title
+    body ->
+      header ->
+        h1 opts.site.title
+      main ->
+        content_fn!
