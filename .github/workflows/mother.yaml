@@ -28,5 +28,11 @@ jobs:
       run: sudo luarocks install yuescript 
     - name: get busted
       run: sudo luarocks install busted
+    - name: get lunamark
+      run: sudo luarocks install lunamark
+    - name: get argparse
+      run: sudo luarocks install argparse
+    - name: get luafilesystem
+      run: sudo luarocks install luafilesystem
     - name: run tests
       run: make test
