@@ -8,11 +8,12 @@ import 'mother.config' as cfg
 parser = argparse 'mother', 'static site generator built in YueScript'
 
 with parser
+  v = \flag '-v --verbose', 'show detailed output'
+
   d = \option '-d --directory', 'run as if mother started in <directory>'
   d\default '.'
 
   b = \command 'build', 'build the site'
-  b\flag '-v --verbose', 'show detailed output'
 
 args = parser\parse!
 
