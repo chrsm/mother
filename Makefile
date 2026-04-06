@@ -1,42 +1,26 @@
 .DEFAULT_GOAL := help
 
+MOTHER_LUA_VERSION ?= 5.4
+
+LUAROCKS ?= luarocks --lua-version=$(MOTHER_LUA_VERSION)
+
 LUA_DIR=/usr
-LUA_LIBDIR=$(LUA_DIR)/lib/lua/5.4
+LUA_LIBDIR=$(LUA_DIR)/lib/lua/$(MOTHER_LUA_VERSION)
 LUA_BINDIR=$(LUA_DIR)/bin
-LUA=$(LUA_BINDIR)/lua5.4
+LUA=$(LUA_BINDIR)/$(MOTHER_LUA_VERSION)
 LUA_INCDIR=$(LUA_DIR)/include
-LUA_SHAREDIR=$(LUA_DIR)/share/lua/5.4
+LUA_SHAREDIR=$(LUA_DIR)/share/lua/$(MOTHER_LUA_VERSION)
 
 INST_PREFIX=/usr/local
-INST_LIBDIR=$(INST_PREFIX)/lib/lua/5.4
+INST_LIBDIR=$(INST_PREFIX)/lib/lua/$(MOTHER_LUA_VERSION)
 INST_BINDIR=$(INST_PREFIX)/bin
-INST_LUADIR=$(INST_PREFIX)/share/lua/5.4
+INST_LUADIR=$(INST_PREFIX)/share/lua/$(MOTHER_LUA_VERSION)
 INST_CONFDIR=$(INST_PREFIX)/etc
 
-# <hack>
-define nl
-
-
-endef
-define lrtestpath
-./?.lua
-./?/init.lua
-$(HOME)/.luarocks/share/lua/5.4/?.lua
-$(HOME)/.luarocks/share/lua/5.4/?/init.lua
-/usr/share/lua/5.4/?.lua
-/usr/share/lua/5.4/?/init.lua
-/usr/local/share/lua/5.4/?.lua
-/usr/local/share/lua/5.4/?/init.lua
-endef
-# </hack>
-YCT_LPATH=$(subst $(nl),;,${lrtestpath})
+YCT_LPATH=$(shell $(LUAROCKS) path --full --lr-path)
 
 .PHONY: all
-all: generate test
-
-.PHONY: build
-## luarocks only
-build: generate
+all: test
 
 .PHONY: clean
 ## delete any compiled lua files
@@ -60,6 +44,32 @@ lint:
 ## run formatter
 format:
 	cd src && yuefmt -w .
+
+.PHONY: build
+## luarocks only
+build:
+
+.PHONY: install
+## luarocks only, install files
+install:
+	mkdir -p $(INST_LUADIR)/mother
+	cp -R src/mother $(INST_LUADIR)/
+	cp bin/mother $(INST_BINDIR)/
+.PHONY: uninstall
+## luarocks only, delete all installed files
+uninstall:
+	$(LUAROCKS) remove mother
+	rm -rf $(HOME)/.luarocks/bin/mother
+	rm -rf $(HOME)/.luarocks/lib/luarocks/rocks-$(MOTHER_LUA_VERSION)/mother
+	rm -rf $(HOME)/.luarocks/share/lua/$(MOTHER_LUA_VERSION)/mother
+
+.PHONY: rock
+## build and install rock locally
+rock:
+	$(LUAROCKS) --local make
+rock-actions:
+	@# not documenting this, because it's only for actions that run as root
+	$(LUAROCKS) make
 
 .PHONY: help
 ## list available commands
