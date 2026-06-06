@@ -21,15 +21,15 @@ DEFAULT_OPTIONS = {
 execute_yue = (code) ->
   lua_code, compile_err = yue.to_lua code, reserve_line_number: false
   unless lua_code
-    error "YueScript compile error in eval block: #{compile_err}"
+    error "YueScript compile error in eval block: #{ compile_err }"
 
   fn, load_err = load lua_code, 'eval', 't'
   unless fn
-    error "Lua load error in eval block: #{load_err}"
+    error "Lua load error in eval block: #{ load_err }"
 
   ok, result = pcall fn
   unless ok
-    error "Execution error in eval block: #{result}"
+    error "Execution error in eval block: #{ result }"
 
   -- just convert whatever it is to a string
   tostring result
@@ -70,7 +70,8 @@ export create_parser = (opts = {}) ->
 
   -- return a simple function that converts markdown to HTML
   (markdown_str) ->
-    html, metadata = parse markdown_str
+    -- remove \r (lunamark)
+    html, metadata = parse markdown_str\gsub '\r\n?', '\n'
     html
 
 -- default parser instance

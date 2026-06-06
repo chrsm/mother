@@ -5,54 +5,135 @@ const START_DELIM = '--- frontmatter ---'
 const END_DELIM = '---/ frontmatter ---'
 
 -- trim whitespace from both ends of a string
---
----@param s string
----@return string
 trim = (s) ->
   s\match('^%s*(.-)%s*$')
 
+parse_scalar = (s) ->
+  s = trim s
+  if s\match('^".*"$') or s\match("^'.*'$")
+    return s\sub 2, -2
+  return true if s == 'true'
+  return false if s == 'false'
+  return nil if s == '' or s == 'null' or s == '~'
+  n = tonumber s
+  return n if n
+  s
+
+-- parse_yaml
+-- parse an actual yaml frontmatter block into a table
+parse_yaml = (text) ->
+  meta = {}
+  key = nil -- list block key
+  list = nil
+  for raw in (text .. '\n')\gmatch '(.-)\r?\n'
+    item = raw\match '^%s*%-%s+(.*)$'
+    if item and key
+      -- `- item` line extends the key's list block
+      list = list or {}
+      list[] = parse_scalar item
+      continue
+
+    -- any other line completes pending list first
+    if key
+      meta[key] = list or {}
+      key = nil
+      list = nil
+
+    t = trim raw
+    if t == '' or (t\sub 1, 1) == '#'
+      continue
+
+    k, v = raw\match '^([%w_%-]+)%s*:%s*(.*)$'
+    unless k
+      continue
+
+    v = trim v
+    if v == ''
+      key = k -- a list _might_ follow
+    elseif v\match '^%[.*%]$'
+      arr = {}
+      for part in (v\sub 2, -2)\gmatch '[^,]+'
+        arr[] = parse_scalar part
+      meta[k] = arr
+    else
+      val = parse_scalar v
+      meta[k] = val if val != nil
+
+  -- flush a trailing list
+  meta[key] = (list or {}) if key
+  meta
+
+-- split a yaml-fenced doc into (frontmatter_text, body_text)
+yaml_fence = (content) ->
+  lines = {}
+  for l in (content .. '\n')\gmatch '(.-)\r?\n'
+    lines[] = l
+
+  unless lines[1] and lines[1]\match '^%-%-%-[ \t]*$'
+    return nil
+
+  close_at = nil
+  for i = 2, #lines
+    if lines[i]\match('^%-%-%-[ \t]*$') or lines[i]\match('^%.%.%.[ \t]*$')
+      close_at = i
+      break
+
+  unless close_at
+    return nil
+
+  fm_lines = {}
+  for i = 2, close_at - 1
+    fm_lines[] = lines[i]
+
+  body_lines = {}
+  for i = close_at + 1, #lines
+    body_lines[] = lines[i]
+
+  (table.concat fm_lines, '\n'), (table.concat body_lines, '\n')
+
 -- parse front-matter from content
 --
----@return table { meta: table, body: string } or { body: string } if no front-matter
+---@return table { meta: table, body: string } or { body: string } if none
 ---@return nil, error_message on parse failure
 export parse = (content) ->
-  start_match = content\sub 1, #START_DELIM
-  unless start_match == START_DELIM
+  -- original mother format: compile
+  if (content\sub 1, #START_DELIM) == START_DELIM
+    end_pos = content\find END_DELIM, #START_DELIM + 1, true
+    return { body: content } unless end_pos
+
+    fm_content = trim content\sub #START_DELIM + 2, end_pos - 1
+    body = content\sub(end_pos + #END_DELIM)\gsub '^[\r\n]+', ''
+
+    -- wrap front-matter content in table syntax and compile
+    yue_src = "{\n#{ fm_content }\n}"
+    lua_code, err = yue.to_lua yue_src, reserve_line_number: false
+    return nil, "compile error: #{ err }" unless lua_code
+
+    -- load and execute the compiled Lua (yue.to_lua already adds 'return')
+    fn, load_err = load lua_code
+    return nil, "lua load error: #{ load_err }" unless fn
+
+    ok, meta = try fn!
+    return nil, "execution error: #{ meta }" unless ok
+    return { :meta, :body }
+
+  -- yaml-style `---`, just parse as data
+  if content\match '^%-%-%-[ \t]*\r?\n'
+    fm, body = yaml_fence content
+    return { meta: parse_yaml(fm), :body } if fm
+    -- a leading `---` with no closer is not a block, just a md break
     return { body: content }
 
-  end_pos = content\find END_DELIM, #START_DELIM + 1, true
-  unless end_pos
-    return { body: content }
-
-  -- extract front-matter content (between delimiters)
-  fm_content = content\sub #START_DELIM + 2, end_pos - 1
-  fm_content = trim(fm_content)
-
-  -- extract body (after end delimiter)
-  body_start = end_pos + #END_DELIM
-  body = content\sub body_start
-  body = body\gsub '^[\r\n]+', ''
-
-  -- wrap front-matter content in table syntax and compile
-  yue_src = "{\n#{ fm_content }\n}"
-  lua_code, err = yue.to_lua yue_src, reserve_line_number: false
-  return nil, "compile error: #{ err }" unless lua_code
-
-  -- load and execute the compiled Lua (yue.to_lua already adds 'return')
-  fn, load_err = load lua_code
-  return nil, "lua load error: #{ load_err }" unless fn
-
-  ok, meta = try fn!
-  unless ok
-    return nil, "execution error: #{ meta }"
-
-  { :meta, :body }
+  { body: content }
 
 -- check if content has front-matter
 --
 ---@param content string
 ---@return boolean
 export has_frontmatter = (content) ->
-  (content\sub 1, #START_DELIM) == START_DELIM
+  if (content\sub 1, #START_DELIM) == START_DELIM
+    return true
+
+  (content\match('^%-%-%-[ \t]*\r?\n') and true) or false
 
 export :START_DELIM, :END_DELIM

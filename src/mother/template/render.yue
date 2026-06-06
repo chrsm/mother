@@ -10,43 +10,36 @@ compiled_cache = {}
 export clear_cache = ->
   compiled_cache = {}
 
--- compile a template file to a Lua function (cached)
+-- compile a template file to lua (cached)
 --
 ---@param path string Path to the .yue template file
----@return compiled function or nil, error
+---@return lua_code string or nil, error
 compile_template = (path) ->
   if compiled_cache[path]
     return compiled_cache[path]
 
   f, open_err = io.open path, 'r'
-  return nil, "Cannot open template: #{path}: #{open_err}" unless f
+  return nil, "Cannot open template: #{ path }: #{ open_err }" unless f
 
   src = f\read '*a'
   f\close!
 
   -- yue->lua
   lua_code, compile_err = yue.to_lua src, reserve_line_number: false
-  return nil, "Template compile error in #{path}: #{compile_err}" unless lua_code
+  return nil, "Template compile error in #{ path }: #{ compile_err }" unless lua_code
 
-  -- load the compiled Lua (but don't execute yet)
-  fn, load_err = load lua_code, path, 't'
-  return nil, "Template load error in #{path}: #{load_err}" unless fn
+  compiled_cache[path] = lua_code
+  lua_code
 
-  -- Cache the compiled function
-  compiled_cache[path] = fn
-  fn
-
--- execute a compiled template function with a given environment
+-- execute compiled template lua source with a given environment
 --
----@param fn - Compiled template function
----@param env - Environment to use
+---@param lua_code string compiled Lua source
+---@param env table environment to use
+---@param name string chunk name for error messages
 ---@return result of execution or nil, error
-execute_template = (fn, env) ->
-  -- set environment
-  if setfenv
-    setfenv fn, env
-  else
-    debug.setupvalue fn, 1, env
+execute_template = (lua_code, env, name = 'template') ->
+  fn, load_err = load lua_code, name, 't', env
+  return nil, "Template load error in #{ name }: #{ load_err }" unless fn
 
   ok, result = try fn!
   if ok
@@ -77,11 +70,11 @@ export render_string = (src, data = {}, opts = {}) ->
     full_path = "#{ template_dir }/#{ path }"
 
     -- compile the template + cache
-    fn, err = compile_template full_path
-    error "import_template failed for '#{ rel_path }': #{ err }" unless fn
+    lua_code, err = compile_template full_path
+    error "import_template failed for '#{ rel_path }': #{ err }" unless lua_code
 
     -- execute with the SAME environment (shares buffer, data, tag functions)
-    result, exec_err = execute_template fn, template_env
+    result, exec_err = execute_template lua_code, template_env, full_path
     error "import_template execution failed for '#{ rel_path }': #{ exec_err }" if exec_err
 
     -- return the exports directly
@@ -95,15 +88,11 @@ export render_string = (src, data = {}, opts = {}) ->
 
   -- yue -> lua
   lua_code, compile_err = yue.to_lua src, reserve_line_number: false
-  return nil, "YueScript compile error: #{compile_err}" unless lua_code
-
-  -- load the compiled Lua
-  fn, load_err = load(lua_code, 'template', 't')
-  return nil, "Lua load error: #{load_err}" unless fn
+  return nil, "YueScript compile error: #{ compile_err }" unless lua_code
 
   -- execute with our environment
-  result, exec_err = execute_template fn, template_env
-  return nil, "Template execution error: #{exec_err}" if exec_err
+  result, exec_err = execute_template lua_code, template_env, 'template'
+  return nil, "Template execution error: #{ exec_err }" if exec_err
 
   buffer\result!
 
@@ -121,7 +110,7 @@ export render_file = (path, data = {}, opts = {}) ->
     template_dir = (path\match '(.+)/[^/]+$') or '.'
 
   f, open_err = io.open path, 'r'
-  return nil, "Cannot open file: #{open_err}" unless f
+  return nil, "Cannot open file: #{ open_err }" unless f
 
   src = f\read '*a'
   f\close!
