@@ -2,7 +2,7 @@ package = 'mother'
 version = 'dev-1'
 
 source = {
-  url = 'git+ssh://git@github.com/chrsm/mother.git'
+  url = 'git+https://git.sr.ht/~chrsm/mother'
 }
 
 description = {
